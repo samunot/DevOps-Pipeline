@@ -1,0 +1,18 @@
+version: '3'
+services:
+  mysql:
+    build: mysql
+    image: mysql:itrust2
+    environment:
+      - MYSQL_ROOT_PASSWORD=password_for_test
+    cap_add:
+      - NET_ADMIN
+  itrust2:
+    build: itrust2
+    image: itrust2
+    ports:
+      - "8080:8080"
+    depends_on:
+      - mysql
+    cap_add:
+      - NET_ADMIN

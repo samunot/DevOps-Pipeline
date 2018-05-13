@@ -1,0 +1,206 @@
+{% extends "bootstrap/base.html" %}
+{% block title %}ChaoTick{% endblock %}
+{% block head %}
+{{ super() }}
+<link rel="icon" type="image/png" href="/static/tick.png"/>
+{% endblock %}
+{% block navbar %}
+<div class="navbar navbar-fixed-top">
+  <!-- ... -->
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+
+  <div class="row>">
+
+    <div class="col">
+
+      <div class="page-header">
+        <h1><img src="/static/tick.png" height="100"/>ChaoTick</h1>
+      </div>
+
+    </div>
+
+  </div>
+
+  <div class="row">
+
+    <div class="col-md">
+      <div class="card">
+        <h5 class="card-header">MySQL</h5>
+        <div class="card-body">
+          {% if not mysql_container_id %}
+          <div class="alert alert-warning" role="alert">
+            <h4 class="alert-heading">Uh-oh!</h4>
+            <p>The MySQL service does not exist.</p>
+            <hr>
+            <form class="form-inline" method="post" action="/service/mysql">
+              <button type="submit" class="btn mb-2" name="action" value="up">Create MySQL container</button>
+            </form>
+          </div>
+          {% elif not mysql_container_info.State.Running %}
+          <div class="alert alert-warning" role="alert">
+            <h4 class="alert-heading">Uh-oh!</h4>
+            <p>The MySQL service is not running.</p>
+            <hr>
+            <form class="form-inline" method="post" action="/service/mysql">
+              <button type="submit" class="btn mb-2" name="action" value="start">Start MySQL Service</button>
+            </form>
+          </div>
+          {% else %}
+          <p class="card-text">Apply some chaos.</p>
+          <form class="form" method="post" action="/container/{{ mysql_container_id }}">
+            <ul class="list-group">
+              <li class="list-group-item">
+                <div class="row">
+                  <div class="col">
+                    Network Delay with Jitter
+                  </div>
+                  <div class="col-sm-auto">
+                    <button type="submit" name="chaos" class="btn btn-primary" value="net_delay">Apply</button>
+                  </div>
+                </div>
+              </li>
+              <li class="list-group-item">
+                <div class="row">
+                  <div class="col">
+                    Network Corruption
+                  </div>
+                  <div class="col-sm-auto">
+                    <button type="submit" name="chaos" class="btn btn-primary" value="net_corrupt">Apply</button>
+                  </div>
+                </div>
+              </li>
+              <li class="list-group-item">
+                <div class="row">
+                  <div class="col">
+                    Network Rate Restriction
+                  </div>
+                  <div class="col-sm-auto">
+                    <button type="submit" name="chaos" class="btn btn-primary" value="net_rate">Apply</button>
+                  </div>
+                </div>
+              </li>
+              <li class="list-group-item">
+                <div class="row">
+                  <div class="col">
+                    Reset Network
+                  </div>
+                  <div class="col-sm-auto">
+                    <button type="submit" name="chaos" class="btn btn-primary" value="net_reset">Apply</button>
+                  </div>
+                </div>
+              </li>
+            </ul>
+          </form>
+          {% endif %}
+          <ul class="list-group mt-2">
+            <li class="list-group-item">
+              <div class="row">
+                <div class="col">
+                  I've broken it
+                </div>
+                <div class="col-sm-auto">
+                  <form class="form-inline" method="post" action="/service/mysql">
+                    <button type="submit" class="btn" name="action" value="restart">Restart MySQL Service</button>
+                  </form>
+                </div>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md">
+      <div class="card">
+        <h5 class="card-header">iTrust2</h5>
+        <div class="card-body">
+          {% if not itrust2_container_id %}
+          <div class="alert alert-warning" role="alert">
+            <h4 class="alert-heading">Uh-oh!</h4>
+            <p>The iTrust2 service does not exist.</p>
+            <hr>
+            <form class="form-inline" method="post" action="/service/itrust2">
+              <button type="submit" class="btn mb-2" name="action" value="up">Deploy iTrust2 Service</button>
+            </form>
+          </div>
+          {% elif not itrust2_container_info.State.Running %}
+          <div class="alert alert-warning" role="alert">
+            <h4 class="alert-heading">Uh-oh!</h4>
+            <p>The iTrust2 service is not running.</p>
+            <hr>
+            <form class="form-inline" method="post" action="/service/itrust2">
+              <button type="submit" class="btn mb-2" name="action" value="start">Start iTrust2 Service</button>
+            </form>
+          </div>
+          {% else %}
+          <p class="card-text">Apply some chaos.</p>
+          <form class="form" method="post" action="/container/{{ itrust2_container_id }}">
+            <ul class="list-group">
+              <li class="list-group-item">
+                <div class="row">
+                  <div class="col">
+                    Network Delay with Jitter
+                  </div>
+                  <div class="col-sm-auto">
+                    <button type="submit" name="chaos" class="btn btn-primary" value="net_delay">Apply</button>
+                  </div>
+                </div>
+              </li>
+              <li class="list-group-item">
+                <div class="row">
+                  <div class="col">
+                    Network Corruption
+                  </div>
+                  <div class="col-sm-auto">
+                    <button type="submit" name="chaos" class="btn btn-primary" value="net_corrupt">Apply</button>
+                  </div>
+                </div>
+              </li>
+              <li class="list-group-item">
+                <div class="row">
+                  <div class="col">
+                    Network Rate Restriction
+                  </div>
+                  <div class="col-sm-auto">
+                    <button type="submit" name="chaos" class="btn btn-primary" value="net_rate">Apply</button>
+                  </div>
+                </div>
+              </li>
+              <li class="list-group-item">
+                <div class="row">
+                  <div class="col">
+                    Reset Network
+                  </div>
+                  <div class="col-sm-auto">
+                    <button type="submit" name="chaos" class="btn btn-primary" value="net_reset">Apply</button>
+                  </div>
+                </div>
+              </li>
+            </ul>
+          </form>
+          {% endif %}
+          <ul class="list-group mt-2">
+            <li class="list-group-item">
+              <div class="row">
+                <div class="col">
+                  I've broken it
+                </div>
+                <div class="col-sm-auto">
+                  <form class="form-inline" method="post" action="/service/itrust2">
+                    <button type="submit" class="btn" name="action" value="restart">Restart iTrust2 Service</button>
+                  </form>
+                </div>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
