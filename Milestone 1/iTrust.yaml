@@ -1,0 +1,258 @@
+---
+- name: Provision iTrust Server on AWS
+  hosts: localhost
+
+- name: Set host
+  hosts: localhost
+  vars:
+    resource_name_suffix: "-iTrust"
+    key_name: "csc519{{ resource_name_suffix }}"
+    region: "us-east-1"
+    # ubuntu lts 14.04
+    image_id: "ami-49c9295f" 
+    security_group_name_iTrust: "csc519-iTrust{{ resource_name_suffix }}"
+    idempotent_tag: "07"
+    hostpath: "{{ lookup('env','KNOWN_HOST_PATH') }}"
+
+  tasks:
+
+    - name: download dynamic inventory script for aws
+      get_url:
+        url: https://raw.github.com/ansible/ansible/devel/contrib/inventory/ec2.py
+        dest: ./ec2.py
+        mode: 0775
+
+    - name: Create ec2 key pair
+      ec2_key:
+        name: "{{ key_name }}"
+        region: "{{ region }}"
+      register: ec2_key
+
+    - name: Save ec2 private key locally
+      copy:
+        content: "{{ ec2_key.key.private_key }}"
+        dest: "./aws-private.pem"
+        mode: 0600
+      when: ec2_key.changed
+
+    - name: create ec2 security group for iTrust
+      ec2_group:
+        name: "{{ security_group_name_iTrust }}"
+        description: csc519 iTrust server security group
+        rules:
+          - proto: tcp
+            ports: 8080
+            cidr_ip: 0.0.0.0/0
+            cidr_ipv6: ::/0
+          - proto: tcp
+            ports: 22
+            cidr_ip: 0.0.0.0/0
+            cidr_ipv6: ::/0
+
+    - name: provision ec2 instance for iTrust
+      ec2:
+        id: "csc519-iTrust{{ resource_name_suffix }}-{{ idempotent_tag }}"
+        region: "{{ region }}"
+        image: "{{ image_id }}"
+        instance_type: t2.micro
+        wait: true
+        instance_tags:
+          csc519: iTrust
+        group: "{{ security_group_name_iTrust }}"
+        key_name: "{{ key_name }}"
+      register: ec2
+
+    - set_fact:
+        iTrust_host: "{{ ec2.instances[0].public_ip }}"
+
+    - name: wait for ssh to start on iTrust instance
+      wait_for:
+        host: "{{ iTrust_host }}"
+        port: 22
+        state: started
+
+    # - name: debug
+    #   debug:
+    #     var: ec2
+
+    - name: get ec2 host key
+      shell: "ssh-keyscan {{ iTrust_host }}"
+      register: ssh_keyscan
+
+    # - name: debug host key
+    #   debug:
+    #     var: ssh_keyscan
+
+    - name: add ec2 instance to known_hosts
+      known_hosts:
+        path: "{{ hostpath }}"
+        name: "{{ iTrust_host }}"
+        key: "{{ item }}"
+      with_items: "{{ ssh_keyscan.stdout_lines }}"
+
+    # had to add this task too 
+    # NOTE: prompts for ssh key fingerprint authentication
+    - name: Add IP to ec2_hosts group
+      add_host: hostname={{ iTrust_host }} groups=ec2_hosts
+      with_items: ec2.instances
+
+- name: Configure iTrust server
+  hosts: "{{ hostvars.localhost.iTrust_host }}"
+  remote_user: ubuntu
+  vars:
+    mysql_account: "vagrant"
+    root_db_password: "{{ lookup('env','ITRUST_SQL_PASSWORD') }}"
+    itrust_email_user: "{{ lookup('env', 'ITRUST_EMAIL') }}"
+    itrust_email_password: "{{ lookup('env', 'ITRUST_PASSWORD') }}"
+    packages:
+      - python-dev
+      - python-pip
+      - python-setuptools
+      - git-core
+      - debconf-utils
+      - maven3
+  
+  # This for the NCSU github credentials when cloning iTrust
+  # TODO use ansible vault
+  vars_prompt: 
+    - name: "githubuser" 
+      prompt: "Enter your NCSU github username" 
+      private: no
+    - name: "githubpassword" 
+      prompt: "Enter your NCSU github password" 
+      private: yes
+
+  tasks:
+
+    # Install all dependencies
+    - name: Set up ppa for maven
+      apt_repository:
+        repo: 'ppa:andrei-pozolotin/maven3'
+        state: "present"
+      become: yes
+
+    # Install Java 8
+    - name: Add repo for Java 8
+      apt_repository: repo='ppa:webupd8team/java' state=present
+      become: yes
+
+    - name: Add apt repository
+      apt_repository:
+        repo: 'ppa:webupd8team/java'
+        state: present
+        update_cache: yes
+      become: yes
+    
+    - name: Accept license
+      debconf:
+        name: 'oracle-java8-installer'
+        question: 'shared/accepted-oracle-license-v1-1'
+        value: 'true'
+        vtype: 'select'
+      become: yes
+
+    - name: Install java
+      apt: name={{ item }} state=present
+      with_items:
+        - oracle-java8-installer
+        - ca-certificates
+        - oracle-java8-set-default
+      become: yes
+
+    # Install other dependencies
+    - name: Install dependencies
+      apt:
+        pkg: "{{ item }}"
+        state: "present"
+        update_cache: yes
+      with_items: "{{ packages }}"
+      become: yes
+
+    # Tomcat setup
+    - name: add group "tomcat"
+      group: name=tomcat
+      become: yes
+
+    - name: add user "tomcat"
+      user: name=tomcat group=tomcat home=/usr/share/tomcat createhome=no
+      become: yes
+
+    - name: Check if application repository has already been cloned
+      stat:
+        path: "/opt/apache-tomcat-9.0.5.tar.gz"
+      register: tomcat_tar
+
+    - name: Download Tomcat
+      get_url: url=http://www.trieuvan.com/apache/tomcat/tomcat-9/v9.0.5/bin/apache-tomcat-9.0.5.tar.gz dest=/opt/apache-tomcat-9.0.5.tar.gz
+      become: yes
+      when: tomcat_tar.stat.exists == False
+
+    - name: Check if application repository has already been cloned
+      stat:
+        path: "/opt/apache-tomcat-9.0.5"
+      register: tomcat
+
+    - name: Extract archive
+      command: chdir=/usr/share /bin/tar xvf /opt/apache-tomcat-9.0.5.tar.gz -C /opt/ creates=/opt/apache-tomcat-9.0.5
+      become: yes
+      when: tomcat.stat.exists == False
+
+    - name: Symlink install directory
+      file: src=/opt/apache-tomcat-9.0.5 path=/usr/share/tomcat state=link
+      become: yes
+
+    - name: Check if application repository has already been cloned
+      stat:
+        path: "{{ ansible_env.HOME }}/dev/iTrust2-v2"
+      register: itrust_repo
+
+    # iTrust is an enterprise repo so prompt for username and password
+    - name: Clone the application repository
+      git:
+        repo: https://{{ githubuser }}:{{ githubpassword }}@github.ncsu.edu/engr-csc326-staff/iTrust2-v2
+        dest: "{{ ansible_env.HOME }}/dev/iTrust2-v2"
+      when: itrust_repo.stat.exists == False
+
+    # MySQL setup
+    - name: Install MySQL
+      apt: name={{ item }} update_cache=yes cache_valid_time=3600 state=present
+      become: yes
+      with_items:
+      - python-mysqldb
+      - mysql-server
+
+    - name: Update MySQL root password for all root accounts 
+      mysql_user:
+        login_user: root
+        login_password: "{{ root_db_password }}"
+        check_implicit_admin: yes
+        name: root
+        host: "{{ item }}"
+        password: "{{ root_db_password }}"
+        state: present
+      with_items:
+        - ::1
+        - localhost
+        - 127.0.0.1
+
+    - name: Start the MySQL service
+      service: 
+        name: mysql 
+        state: started
+        enabled: true
+      become: yes
+    
+    - name: Copy hibernate properties file to resources folder
+      template:
+        src: "templates/hibernate.properties.template"
+        dest: "{{ ansible_env.HOME }}/dev/iTrust2-v2/iTrust2/src/main/resources/hibernate.properties"
+    
+    - name: Copy db properties file to java folder
+      template: 
+        src: "templates/db.properties.template"
+        dest: "{{ ansible_env.HOME }}/dev/iTrust2-v2/iTrust2/src/main/java/db.properties"
+
+    - name: Copy email properties file to java folder
+      template: 
+        src: "templates/email.properties.template"
+        dest: "{{ ansible_env.HOME }}/dev/iTrust2-v2/iTrust2/src/main/java/email.properties"

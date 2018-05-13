@@ -1,0 +1,387 @@
+---
+- name: Provision Jenkins Server on AWS
+  hosts: localhost
+  vars_files:
+  - jenkins-defaults.yaml
+
+  tasks:
+
+    - name: create ec2 key pair
+      ec2_key:
+        name:   "{{ aws.ec2.key.name }}"
+        region: "{{ aws.region }}"
+      register: ec2_key
+
+    - name: save ec2 private key locally
+      copy:
+        content: "{{ ec2_key.key.private_key }}"
+        dest: "./{{ aws.ec2.key.private_key_file }}"
+        mode: 0600
+      when: ec2_key.changed
+
+    - name: create ec2 security group for jenkins
+      ec2_group:
+        name: "{{ aws.ec2.jenkins.security_group.name }}"
+        description: Jenkins
+        rules:
+          - proto: tcp
+            ports: 8080
+            cidr_ip: 0.0.0.0/0
+            cidr_ipv6: ::/0
+          - proto: tcp
+            ports: 22
+            cidr_ip: 0.0.0.0/0
+            cidr_ipv6: ::/0
+
+    - name: provision ec2 instance for jenkins
+      ec2:
+        id: "{{ aws.ec2.jenkins.idempotent_id }}"
+        image: "{{ aws.ec2.jenkins.image_id }}"
+        instance_type: t2.micro
+        key_name: "{{ aws.ec2.key.name }}"
+        group: "{{ aws.ec2.jenkins.security_group.name }}"
+        region: "{{ aws.region }}"
+        instance_profile_name: "csc519-jenkins"
+        instance_tags:
+          csc519: jenkins
+        wait: true
+      register: ec2
+
+    - set_fact:
+        jenkins_host: "{{ ec2.instances[0].public_ip }}"
+
+    - name: wait for ssh to start on Jenkins instance
+      wait_for:
+        host: "{{ jenkins_host }}"
+        port: 22
+        state: started
+
+    - name: get ec2 host key
+      shell: "ssh-keyscan {{ jenkins_host }}"
+      register: ssh_keyscan
+
+    - name: add ec2 instance to known_hosts
+      known_hosts:
+        name: "{{ jenkins_host }}"
+        key: "{{ item }}"
+      with_items: "{{ ssh_keyscan.stdout_lines }}"
+
+    - name: add ec2 instance to in-memory inventory
+      add_host:
+        host: jenkins
+        ansible_host: "{{ jenkins_host }}"
+        # ansible_user: ec2-user
+        ansible_user: ubuntu
+        ansible_ssh_private_key_file: "./{{ aws.ec2.key.private_key_file }}"
+
+- name: configure Jenkins server
+  # hosts: webserver
+  hosts: jenkins
+  become: true
+  vars:
+    utilities:
+      - git
+      - npm
+      - maven
+      - python-pip
+      - ansible
+    jenkins_key_url: "https://pkg.jenkins.io/debian/jenkins-ci.org.key"
+    jenkins_repository: "deb http://pkg.jenkins.io/debian-stable binary/"
+    jenkins_cli_jar: "http://localhost:8080/jnlpJars/jenkins-cli.jar"
+    jenkins_home : /var/lib/jenkins/
+    jenkins_groovy: /var/lib/jenkins/init.groovy.d
+
+  vars_prompt:
+  - name: github_username
+    prompt: "Enter your NCSU github username"
+    private: no
+  - name: github_password
+    prompt: "Enter your NCSU github password"
+    private: yes
+    confirm: yes
+  - name: mysql_pass
+    prompt: "Enter your MySQL password"
+    private: yes
+
+  tasks:
+
+    - name: Add apt repository for ansible
+      apt_repository:
+        repo: 'ppa:ansible/ansible'
+        state: present
+        update_cache: yes
+      become: yes
+
+    - name: Install all basic utilities- git etc
+      apt: pkg="{{ item }}" state=present update_cache=yes
+      with_items: "{{ utilities }}"
+      become: yes
+  
+    # Install Java 8
+    - name: Add repo for Java 8
+      apt_repository: repo='ppa:webupd8team/java' state=present
+      become: yes
+
+    - name: Add apt repository
+      apt_repository:
+        repo: 'ppa:webupd8team/java'
+        state: present
+        update_cache: yes
+      become: yes
+    
+    - name: Accept license
+      debconf:
+        name: 'oracle-java8-installer'
+        question: 'shared/accepted-oracle-license-v1-1'
+        value: 'true'
+        vtype: 'select'
+      become: yes
+
+    - name: Install java
+      apt: name={{ item }} state=present
+      with_items:
+        - oracle-java8-installer
+        - ca-certificates
+        - oracle-java8-set-default
+      become: yes
+
+    - name: Add the key for Jenkins
+      apt_key: url="{{ jenkins_key_url }}" state=present
+      become: yes  
+
+    - name: Add Jenkins to /etc/apt/sources.list.d
+      apt_repository: repo="{{ jenkins_repository }}" state=present
+      become: yes
+      
+    - name: Install jenkins
+      apt: 
+        pkg: jenkins
+        state: present
+        update_cache: yes 
+      become: yes
+    
+    - name : Restart Jenkins service
+      service: 
+       name: jenkins
+       state: started
+       enabled: yes
+    
+    - name : Wait for jenkins service to be up
+      wait_for:
+       port: 8080
+       delay: 45
+
+    - name: Turn off Jenkins setup wizard
+      lineinfile: dest=/etc/default/jenkins regexp='^JAVA_ARGS=' line='JAVA_ARGS="-Djava.awt.headless=true -Djenkins.install.runSetupWizard=false"'
+
+    - name : Disable security
+      replace: 
+        dest: /var/lib/jenkins/config.xml
+        regexp: "<useSecurity>true</useSecurity>"
+        replace: "<useSecurity>false</useSecurity>"
+
+    - name : Disable security
+      replace: 
+        dest: /var/lib/jenkins/config.xml
+        regexp: "<isSetupComplete>false</isSetupComplete>"
+        replace: "<isSetupComplete>true</isSetupComplete>"
+
+    - name : Disable security
+      replace: 
+        dest: /var/lib/jenkins/config.xml
+        regexp: "<name>NEW</name>"
+        replace: "<name>RUNNING</name>"
+
+    - name : Restart Jenkins service
+      service: 
+       name: jenkins
+       state: restarted
+       
+    - name : Wait for jenkins service to be up
+      wait_for:
+       port: 8080
+       delay: 45
+    
+    - name: Download Jenkins Cli Jar
+      get_url: 
+       url: "http://localhost:8080/jnlpJars/jenkins-cli.jar" 
+       dest: /tmp
+
+    - name: Install Jenkins plugins for Maven and Git 
+      command: java -jar /tmp/jenkins-cli.jar -s http://localhost:8080/ install-plugin {{ item }}
+      with_items:
+       - maven-plugin
+       - github
+       - postbuild-task
+       - aws-credentials
+       
+    - name : Restart Jenkins service
+      service: 
+       name: jenkins
+       state: restarted    
+       
+    - name : Wait for jenkins service to be up
+      wait_for:
+       port: 8080
+       delay: 45
+
+    - name: Create directory for groovy file
+      file: 
+        path: "{{ jenkins_groovy }}"
+        state: directory
+        owner: jenkins
+        group: jenkins
+       
+    - name: Copy groovy file 
+      copy:
+        src: "create-credentials.groovy"
+        dest: "{{ jenkins_groovy }}/create-credentials.groovy"
+        owner: jenkins
+        group: jenkins
+       
+    - name: Add github credentials to create-credentials.groovy file
+      lineinfile:
+        dest: "{{ jenkins_groovy }}/create-credentials.groovy"
+        insertafter: EOF
+        line: "addPassword('{{ github_username }}', '{{ github_password }}')"
+        state: present
+      
+    - name : Restart Jenkins service
+      service: 
+       name: jenkins
+       state: restarted    
+       
+    - name : Wait for jenkins service to be up
+      wait_for:
+       port: 8080
+       delay: 45
+
+    - name: pip install jenkins-job-builder
+      pip:
+        name: jenkins-job-builder
+
+    - name: Create directory for jobs
+      file: 
+       path: "{{ jenkins_home }}/build-jobs"
+       state: directory
+       mode: 0775
+
+    - name: copy checkbox-job file
+      copy: 
+        src: "jobs/checkbox-job.yml"
+        dest: "{{ jenkins_home }}/build-jobs"
+
+    - name: copy iTrust-job file
+      copy: 
+        src: "jobs/iTrust-job.yml"
+        dest: "{{ jenkins_home }}/build-jobs"
+      
+    - name: Add MySQL Apt Key
+      apt_key:
+        keyserver: pgpkeys.mit.edu
+        id: 5072E1F5
+
+    - name: Add MySQL repository
+      apt_repository: 
+        repo: deb http://repo.mysql.com/apt/ubuntu/ trusty mysql-5.7    
+
+    - name: Set root Password
+      debconf:
+        name: mysql-community-server
+        question: 'mysql-community-server/root-pass'
+        value: '{{ mysql_pass }}' 
+        vtype: password
+
+    - name: Set root Password Again
+      debconf:
+        name: mysql-community-server
+        question: 'mysql-community-server/re-root-pass'
+        value: '{{ mysql_pass }}'
+        vtype: password
+
+    - name: Install MySQL 5.7
+      apt:
+        pkg: '{{ item }}'
+        state: present
+        update_cache: true
+      with_items:
+        - mysql-server
+
+    - name: Start MySQL
+      service:
+        name: mysql
+        state: started
+    
+    - name: Replace MySQL pass in job file
+      replace:
+        dest: "{{ jenkins_home }}build-jobs/iTrust-job.yml"
+        regexp: "dummy"
+        replace: "{{ mysql_pass }}"
+
+    - name: Build jobs
+      shell: "jenkins-jobs update build-jobs"
+      args:
+        chdir: "{{ jenkins_home }}"
+
+    # Setting up all dependencies for iTrust provisioning for Jenkins
+    
+    - name: install all dependencies 
+      pip:
+        name: "{{ item }}"
+      with_items:
+        - boto==2.48.0
+        - boto3==1.5.36
+
+    - name: copy iTrust playbook file
+      copy: 
+        src: "iTrust-provision.yml"
+        dest: "{{ jenkins_home }}/iTrust.yml"
+        owner: jenkins
+        group: jenkins
+
+    - name: copy checkbox playbook file
+      copy: 
+        src: "checkbox.io.yaml"
+        dest: "{{ jenkins_home }}/checkbox.io.yaml"
+        owner: jenkins
+        group: jenkins
+
+    - name: copy run-checkbox.io.sh
+      copy: 
+        src: "run-checkbox.io.sh"
+        dest: "{{ jenkins_home }}/run-checkbox.io.sh"
+        owner: jenkins
+        group: jenkins
+
+    - name: create .aws folder on jenkins
+      file: 
+        path: "{{ jenkins_home }}/.aws"
+        state: directory
+        owner: jenkins
+        group: jenkins
+
+    - name: create config file
+      ini_file:
+        path: "{{ jenkins_home }}/.aws/config"
+        section: default
+        option: region
+        value: us-east-1
+
+    - name: create .ssh folder on jenkins
+      file: 
+        path: "{{ jenkins_home }}/.ssh"
+        state: directory
+        owner: jenkins
+        group: jenkins   
+
+    - name: create known_hosts file
+      file:
+        path: "{{ jenkins_home }}/.ssh/known_hosts"
+        state: touch  
+        owner: jenkins
+        group: jenkins   
+
+    - name: give jenkins permission on home
+      shell: "chown -R jenkins:jenkins {{ jenkins_home }}"
+      
+

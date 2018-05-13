@@ -1,0 +1,33 @@
+- job:
+    block-downstream: false
+    block-upstream: false
+    builders:
+    - shell: |-
+        cd server-side/site/
+        npm install
+    concurrent: false
+    description: null
+    disabled: false
+    name: !!python/unicode 'checkbox'
+    project-type: freestyle
+    publishers:
+    - post-tasks:
+      - escalate-status: false
+        matches:
+        - log-text: null
+          operator: AND
+        run-if-job-successful: true
+        script: |-
+          cd /var/lib/jenkins/scripts
+          ansible-playbook checkbox.io-provision.yaml
+    scm:
+    - git:
+        branches:
+        - '*/production'
+        credentials-id: pass
+        url: https://github.ncsu.edu/itrust-no-one/checkbox.io
+    triggers:
+    - pollscm:
+        cron: '* * * * *'
+        ignore-post-commit-hooks: false
+    wrappers: []

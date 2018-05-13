@@ -1,0 +1,385 @@
+---
+- name: Provision Jenkins Server on AWS
+  hosts: localhost
+  vars_files:
+  - jenkins-defaults.yaml
+
+  tasks:
+
+    - name: create ec2 key pair
+      ec2_key:
+        name:   "{{ aws.ec2.key.name }}"
+        region: "{{ aws.region }}"
+      register: ec2_key
+
+    - name: save ec2 private key locally
+      copy:
+        content: "{{ ec2_key.key.private_key }}"
+        dest: "./{{ aws.ec2.key.private_key_file }}"
+        mode: 0600
+      when: ec2_key.changed
+
+    - name: create ec2 security group for jenkins
+      ec2_group:
+        name: "{{ aws.ec2.jenkins.security_group.name }}"
+        description: Jenkins
+        rules:
+          - proto: tcp
+            ports: 8080
+            cidr_ip: 0.0.0.0/0
+            cidr_ipv6: ::/0
+          - proto: tcp
+            ports: 22
+            cidr_ip: 0.0.0.0/0
+            cidr_ipv6: ::/0
+        rules_egress:
+          - proto: all
+            from_port: 0
+            to_port: 65535
+            cidr_ip: 0.0.0.0/0
+            cidr_ipv6: ::/0
+
+    - name: provision ec2 instance for jenkins
+      ec2:
+        id: "{{ aws.ec2.jenkins.idempotent_id }}"
+        image: "{{ aws.ec2.jenkins.image_id }}"
+        instance_type: t2.micro
+        key_name: "{{ aws.ec2.key.name }}"
+        group: "{{ aws.ec2.jenkins.security_group.name }}"
+        region: "{{ aws.region }}"
+        instance_profile_name: "csc519-jenkins"
+        instance_tags:
+          csc519: jenkins
+        wait: true
+      register: ec2
+
+    - set_fact:
+        jenkins_host: "{{ ec2.instances[0].public_ip }}"
+
+    - name: wait for ssh to start on Jenkins instance
+      wait_for:
+        host: "{{ jenkins_host }}"
+        port: 22
+        state: started
+
+    - name: get ec2 host key
+      shell: "ssh-keyscan {{ jenkins_host }}"
+      register: ssh_keyscan
+
+    - name: add ec2 instance to known_hosts
+      known_hosts:
+        name: "{{ jenkins_host }}"
+        key: "{{ item }}"
+      with_items: "{{ ssh_keyscan.stdout_lines }}"
+
+    - name: add ec2 instance to in-memory inventory
+      add_host:
+        host: jenkins
+        ansible_host: "{{ jenkins_host }}"
+        # ansible_user: ec2-user
+        ansible_user: ubuntu
+        ansible_ssh_private_key_file: "./{{ aws.ec2.key.private_key_file }}"
+
+- hosts: jenkins
+  name: configuration play
+  user: ubuntu
+  become: true
+  gather_facts: false
+  tasks:
+ 
+  - name: install python 2
+    raw: test -e /usr/bin/python || (sudo apt -y update && sudo apt install -y python-minimal)
+     
+  - name: gather_facts
+    setup:
+
+- name: configure Jenkins server
+  # hosts: webserver
+  hosts: jenkins
+  become: true
+  vars:
+    utilities:
+      - git
+      - nodejs
+      - maven
+      - python-pip
+      - ansible
+    jenkins_key_url: "https://pkg.jenkins.io/debian/jenkins-ci.org.key"
+    jenkins_repository: "deb http://pkg.jenkins.io/debian-stable binary/"
+    jenkins_cli_jar: "http://localhost:8080/jnlpJars/jenkins-cli.jar"
+    jenkins_home : /var/lib/jenkins/
+    jenkins_groovy: /var/lib/jenkins/init.groovy.d
+    mysql_pass: "qwe123"
+
+  vars_prompt:
+  - name: github_username
+    prompt: "Enter your NCSU github username"
+    private: no
+  - name: github_password
+    prompt: "Enter your NCSU github password"
+    private: yes
+    confirm: yes
+
+  tasks:
+
+    - name: Add apt repository for ansible
+      apt_repository:
+        repo: 'ppa:ansible/ansible'
+        state: present
+        update_cache: yes
+      become: yes
+
+    - name: Add Nodesource Keys
+      become: yes
+      apt_key:
+        url: https://deb.nodesource.com/gpgkey/nodesource.gpg.key
+
+    - name: Add Nodesource Apt Sources
+      become: yes
+      apt_repository:
+        repo: '{{ item }}'
+        state: present
+      with_items:
+        - 'deb https://deb.nodesource.com/node_8.x xenial main'
+        - 'deb-src https://deb.nodesource.com/node_8.x xenial main'
+
+    # Install Utilities
+    - name: Install all basic utilities- git etc
+      apt: pkg="{{ item }}" state=present update_cache=yes
+      with_items: "{{ utilities }}"
+      become: yes
+
+    - name: install all dependencies 
+      pip:
+        name: "{{ item }}"
+      with_items:
+        - boto==2.48.0
+        - boto3==1.5.36
+  
+    # Install Java 8
+    - name: Add repo for Java 8
+      apt_repository: repo='ppa:webupd8team/java' state=present
+      become: yes
+
+    - name: Add apt repository
+      apt_repository:
+        repo: 'ppa:webupd8team/java'
+        state: present
+        update_cache: yes
+      become: yes
+    
+    - name: Accept license
+      debconf:
+        name: 'oracle-java8-installer'
+        question: 'shared/accepted-oracle-license-v1-1'
+        value: 'true'
+        vtype: 'select'
+      become: yes
+
+    - name: Install java
+      apt: name={{ item }} state=present
+      with_items:
+        - oracle-java8-installer
+        - ca-certificates
+        - oracle-java8-set-default
+      become: yes
+
+    - name: Add the key for Jenkins
+      apt_key: url="{{ jenkins_key_url }}" state=present
+      become: yes  
+
+    - name: Add Jenkins to /etc/apt/sources.list.d
+      apt_repository: repo="{{ jenkins_repository }}" state=present
+      become: yes
+      
+    - name: Install jenkins
+      apt: 
+        pkg: jenkins
+        state: present
+        update_cache: yes 
+      become: yes
+    
+    - name: Restart Jenkins service
+      service: 
+       name: jenkins
+       state: started
+       enabled: yes
+    
+    - name: Wait for jenkins service to be up
+      wait_for:
+       port: 8080
+       delay: 45
+
+    - name: Turn off Jenkins setup wizard
+      lineinfile: dest=/etc/default/jenkins regexp='^JAVA_ARGS=' line='JAVA_ARGS="-Djava.awt.headless=true -Djenkins.install.runSetupWizard=false"'
+
+    - name: Disable security
+      replace: 
+        dest: /var/lib/jenkins/config.xml
+        regexp: "<useSecurity>true</useSecurity>"
+        replace: "<useSecurity>false</useSecurity>"
+
+    - name: Changing state for setup to complete 
+      replace: 
+        dest: /var/lib/jenkins/config.xml
+        regexp: "<isSetupComplete>false</isSetupComplete>"
+        replace: "<isSetupComplete>true</isSetupComplete>"
+
+    - name: Change state for jenkins to Running
+      replace: 
+        dest: /var/lib/jenkins/config.xml
+        regexp: "<name>NEW</name>"
+        replace: "<name>RUNNING</name>"
+
+    - name: Restart Jenkins service
+      service: 
+       name: jenkins
+       state: restarted
+       
+    - name: Wait for jenkins service to be up
+      wait_for:
+       port: 8080
+       delay: 45
+    
+    - name: Download Jenkins Cli Jar
+      get_url: 
+       url: "http://localhost:8080/jnlpJars/jenkins-cli.jar" 
+       dest: /tmp
+
+    - name: Install Jenkins plugins for Maven and Git 
+      command: java -jar /tmp/jenkins-cli.jar -s http://localhost:8080/ install-plugin {{ item }}
+      with_items:
+       - maven-plugin
+       - github
+       - postbuild-task
+       - aws-credentials
+       - jacoco
+       - build-timeout
+       - htmlpublisher
+       
+    - name: Restart Jenkins service
+      service: 
+       name: jenkins
+       state: restarted    
+       
+    - name: Wait for jenkins service to be up
+      wait_for:
+       port: 8080
+       delay: 45
+
+    - name: Create directory for groovy file
+      file: 
+        path: "{{ jenkins_groovy }}"
+        state: directory
+        owner: jenkins
+        group: jenkins
+       
+    - name: Copy groovy file 
+      copy:
+        src: "scripts/create-credentials.groovy"
+        dest: "{{ jenkins_groovy }}/create-credentials.groovy"
+        owner: jenkins
+        group: jenkins
+        mode: 0775
+       
+    - name: Add github credentials to create-credentials.groovy file
+      lineinfile:
+        dest: "{{ jenkins_groovy }}/create-credentials.groovy"
+        insertafter: EOF
+        line: "addPassword('{{ github_username }}', '{{ github_password }}')"
+        state: present
+      
+    - name: Restart Jenkins service
+      service: 
+       name: jenkins
+       state: restarted    
+       
+    - name: Wait for jenkins service to be up
+      wait_for:
+       port: 8080
+       delay: 45
+
+    - name: pip install jenkins-job-builder
+      pip:
+        name: jenkins-job-builder
+
+    - name: Create directory for jobs
+      file: 
+       path: "{{ jenkins_home }}/build-jobs"
+       state: directory
+       mode: 0775
+
+    - name: Create directory for scripts
+      file: 
+        path: "{{ jenkins_home }}/scripts"
+        state: directory
+        mode: 0775
+
+    - name: Copy jobs
+      copy:
+        src: "build-jobs"
+        dest: "{{ jenkins_home }}"
+        owner: jenkins
+        group: jenkins
+        mode: 0775
+        directory_mode: yes
+
+    - name: Copy Scripts
+      copy:
+        src: "scripts"
+        dest: "{{ jenkins_home }}"
+        owner: jenkins
+        group: jenkins
+        mode: 0775
+        directory_mode: yes
+
+    - name: create .ssh folder on jenkins
+      file: 
+        path: "{{ jenkins_home }}/.ssh"
+        state: directory
+        owner: jenkins
+        group: jenkins  
+
+    - name: create known_hosts file
+      file:
+        path: "{{ jenkins_home }}/.ssh/known_hosts"
+        state: touch  
+        owner: jenkins
+        group: jenkins   
+
+        # Make jenkins sudoer
+    - name: Allow 'jenkins' group to have passwordless sudo
+      lineinfile:
+        dest: /etc/sudoers
+        state: present
+        regexp: '^%jenkins'
+        line: '%jenkins ALL=(ALL) NOPASSWD: ALL'
+        validate: visudo -cf %s
+
+    - name: Add sudoers users to jenkins group
+      user:
+        name: "jenkins"
+        groups: jenkins
+        append: yes
+    
+    - name: Give jenkins permission on home
+      shell: "chown -R jenkins:jenkins {{ jenkins_home }}"
+
+    - name: Run ansible script to create 5 iTrust servers 
+      shell: "cd /var/lib/jenkins/scripts && ansible-playbook create-iTrust-servers.yml"
+
+    - name: Run ansible script to configure mysql
+      shell: "cd /var/lib/jenkins/scripts && ansible-playbook -i inventory mysql-configure.yml"
+
+    - name: Build jobs
+      shell: "jenkins-jobs update build-jobs"
+      args:
+        chdir: "{{ jenkins_home }}"
+
+    # for human-readable output, run with ANSIBLE_STDOUT_CALLBACK=debug
+    - name: print some handy info
+      debug:
+        msg: |
+          Jenkins URL:
+            "http://{{ ansible_host }}:8080"
+

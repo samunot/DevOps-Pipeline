@@ -1,0 +1,67 @@
+- job:
+    block-downstream: false
+    block-upstream: false
+    builders:
+    - raw:
+        xml: |
+          <hudson.plugins.build__timeout.BuildStepWithTimeout plugin="build-timeout@1.19">
+          <strategy class="hudson.plugins.build_timeout.impl.AbsoluteTimeOutStrategy">
+          <timeoutMinutes>5</timeoutMinutes>
+          </strategy>
+          <buildStep class="hudson.tasks.Shell">
+          <command>cd /var/lib/jenkins/workspace/iTrust/iTrust2
+          sudo mvn process-test-classes -f pom-data.xml
+          sudo mvn test || exit 0
+          sudo chown -R jenkins target
+          sudo chgrp -R jenkins target</command>
+          </buildStep>
+          <operationList>
+          <hudson.plugins.build__timeout.operations.FailOperation />
+          </operationList>
+          </hudson.plugins.build__timeout.BuildStepWithTimeout>
+    concurrent: false
+    description: null
+    disabled: false
+    name: !!python/unicode 'iTrustReports'
+    project-type: freestyle
+    publishers:
+    - post-tasks:
+      - escalate-status: false
+        matches:
+        - log-text: null
+          operator: AND
+        run-if-job-successful: false
+        script: cp -r iTrust2/target/surefire-reports /var/lib/jenkins/jobs/iTrustReports/builds/$BUILD_NUMBER/
+    - raw:
+        xml: |
+          <hudson.plugins.jacoco.JacocoPublisher plugin="jacoco@3.0.1">
+          <execPattern>**/**.exec</execPattern>
+          <classPattern>**/classes</classPattern>
+          <sourcePattern>**/src/main/java</sourcePattern>
+          <inclusionPattern />
+          <exclusionPattern />
+          <skipCopyOfSrcFiles>false</skipCopyOfSrcFiles>
+          <minimumInstructionCoverage>0</minimumInstructionCoverage>
+          <minimumBranchCoverage>0</minimumBranchCoverage>
+          <minimumComplexityCoverage>0</minimumComplexityCoverage>
+          <minimumLineCoverage>0</minimumLineCoverage>
+          <minimumMethodCoverage>0</minimumMethodCoverage>
+          <minimumClassCoverage>0</minimumClassCoverage>
+          <maximumInstructionCoverage>0</maximumInstructionCoverage>
+          <maximumBranchCoverage>0</maximumBranchCoverage>
+          <maximumComplexityCoverage>0</maximumComplexityCoverage>
+          <maximumLineCoverage>0</maximumLineCoverage>
+          <maximumMethodCoverage>0</maximumMethodCoverage>
+          <maximumClassCoverage>0</maximumClassCoverage>
+          <changeBuildStatus>false</changeBuildStatus>
+          <deltaInstructionCoverage>0</deltaInstructionCoverage>
+          <deltaBranchCoverage>0</deltaBranchCoverage>
+          <deltaComplexityCoverage>0</deltaComplexityCoverage>
+          <deltaLineCoverage>0</deltaLineCoverage>
+          <deltaMethodCoverage>0</deltaMethodCoverage>
+          <deltaClassCoverage>0</deltaClassCoverage>
+          <buildOverBuild>false</buildOverBuild>
+          </hudson.plugins.jacoco.JacocoPublisher>
+    triggers: []
+    workspace: /var/lib/jenkins/workspace/iTrust
+    wrappers: []

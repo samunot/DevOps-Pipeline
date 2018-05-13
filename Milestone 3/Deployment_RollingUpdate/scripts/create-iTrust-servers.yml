@@ -1,0 +1,242 @@
+---
+- name: Provision iTrust Server on AWS
+  hosts: localhost
+  vars:
+    aws:
+      region: us-east-1
+      ec2:
+        key:
+          name: "csc519-iTrust2-servers"
+          private_key_file: "iTrust2-servers.pem"
+        iTrust:
+          # idempotent_id: "csc519-iTrust-{{ unique_id }}"
+          # ubuntu 14.04 lts
+          # image_id: "ami-49c9295f"
+          image_id: "ami-66506c1c"
+          security_group:
+            name: "csc519-iTrust2-servers"
+  tasks:
+
+    - name: create ec2 key pair
+      ec2_key:
+        name:   "{{ aws.ec2.key.name }}"
+        region: "{{ aws.region }}"
+      register: ec2_key
+
+    - name: save ec2 private key locally
+      copy:
+        content: "{{ ec2_key.key.private_key }}"
+        dest: "{{ aws.ec2.key.private_key_file }}"
+        mode: 0600
+      when: ec2_key.changed
+
+    - name: create ec2 security group for iTrust
+      ec2_group:
+        name: "{{ aws.ec2.iTrust.security_group.name }}"
+        description: iTrust servers
+        region: "{{ aws.region }}"
+        rules:
+          - proto: tcp
+            ports: 8080
+            cidr_ip: 0.0.0.0/0
+            cidr_ipv6: ::/0
+          - proto: tcp
+            ports: 22
+            cidr_ip: 0.0.0.0/0
+            cidr_ipv6: ::/0
+          - proto: tcp
+            ports: 3306
+            cidr_ip: 0.0.0.0/0
+            cidr_ipv6: ::/0
+        rules_egress:
+          - proto: all
+            from_port: 0
+            to_port: 65535
+            cidr_ip: 0.0.0.0/0
+            cidr_ipv6: ::/0
+
+
+    - name: provision ec2 instance for iTrust
+      ec2:
+        image: "{{ aws.ec2.iTrust.image_id }}"
+        instance_type: t2.micro
+        key_name: "{{ aws.ec2.key.name }}"
+        group: "{{ aws.ec2.iTrust.security_group.name }}"
+        region: "{{ aws.region }}"
+        instance_tags:
+          csc519: iTrust
+        wait: true
+        count: 6
+      register: ec2
+
+    - set_fact:
+        iTrust_host1: "{{ ec2.instances[0].public_ip }}"
+        iTrust_host2: "{{ ec2.instances[1].public_ip }}"
+        iTrust_host3: "{{ ec2.instances[2].public_ip }}"
+        iTrust_host4: "{{ ec2.instances[3].public_ip }}"
+        iTrust_host5: "{{ ec2.instances[4].public_ip }}"
+        mysql: "{{ ec2.instances[5].public_ip }}"
+
+    - name: wait for ssh to start on iTrust instance
+      wait_for:
+        host: "{{ iTrust_host1 }}"
+        port: 22
+        state: started
+
+    - name: get ec2 host key
+      shell: "ssh-keyscan {{ iTrust_host1 }}"
+      register: ssh_keyscan
+
+    - name: add ec2 instance to known_hosts
+      known_hosts:
+        name: "{{ iTrust_host1 }}"
+        key: "{{ item }}"
+      with_items: "{{ ssh_keyscan.stdout_lines }}"
+
+    - name: add ec2 instance to in-memory inventory
+      add_host:
+        host: iTrust
+        ansible_host: "{{ iTrust_host1 }}"
+        # ansible_user: ec2-user
+        ansible_user: ubuntu
+        ansible_ssh_private_key_file: "{{ aws.ec2.key.private_key_file }}"
+
+    # 2
+    - name: wait for ssh to start on iTrust instance
+      wait_for:
+        host: "{{ iTrust_host2 }}"
+        port: 22
+        state: started
+
+    - name: get ec2 host key
+      shell: "ssh-keyscan {{ iTrust_host2 }}"
+      register: ssh_keyscan
+
+    - name: add ec2 instance to known_hosts
+      known_hosts:
+        name: "{{ iTrust_host2 }}"
+        key: "{{ item }}"
+      with_items: "{{ ssh_keyscan.stdout_lines }}"
+
+    - name: add ec2 instance to in-memory inventory
+      add_host:
+        host: iTrust
+        ansible_host: "{{ iTrust_host2 }}"
+        # ansible_user: ec2-user
+        ansible_user: ubuntu
+        ansible_ssh_private_key_file: "{{ aws.ec2.key.private_key_file }}"
+
+    # 3
+    - name: wait for ssh to start on iTrust instance
+      wait_for:
+        host: "{{ iTrust_host3 }}"
+        port: 22
+        state: started
+
+    - name: get ec2 host key
+      shell: "ssh-keyscan {{ iTrust_host3 }}"
+      register: ssh_keyscan
+
+    - name: add ec2 instance to known_hosts
+      known_hosts:
+        name: "{{ iTrust_host3 }}"
+        key: "{{ item }}"
+      with_items: "{{ ssh_keyscan.stdout_lines }}"
+
+    - name: add ec2 instance to in-memory inventory
+      add_host:
+        host: iTrust
+        ansible_host: "{{ iTrust_host3 }}"
+        # ansible_user: ec2-user
+        ansible_user: ubuntu
+        ansible_ssh_private_key_file: "{{ aws.ec2.key.private_key_file }}"
+    
+    # 4
+    - name: wait for ssh to start on iTrust instance
+      wait_for:
+        host: "{{ iTrust_host4 }}"
+        port: 22
+        state: started
+
+    - name: get ec2 host key
+      shell: "ssh-keyscan {{ iTrust_host4 }}"
+      register: ssh_keyscan
+
+    - name: add ec2 instance to known_hosts
+      known_hosts:
+        name: "{{ iTrust_host4 }}"
+        key: "{{ item }}"
+      with_items: "{{ ssh_keyscan.stdout_lines }}"
+
+    - name: add ec2 instance to in-memory inventory
+      add_host:
+        host: iTrust
+        ansible_host: "{{ iTrust_host4 }}"
+        # ansible_user: ec2-user
+        ansible_user: ubuntu
+        ansible_ssh_private_key_file: "{{ aws.ec2.key.private_key_file }}"
+
+    # 5
+    - name: wait for ssh to start on iTrust instance
+      wait_for:
+        host: "{{ iTrust_host5 }}"
+        port: 22
+        state: started
+
+    - name: get ec2 host key
+      shell: "ssh-keyscan {{ iTrust_host5 }}"
+      register: ssh_keyscan
+
+    - name: add ec2 instance to known_hosts
+      known_hosts:
+        name: "{{ iTrust_host5 }}"
+        key: "{{ item }}"
+      with_items: "{{ ssh_keyscan.stdout_lines }}"
+
+    - name: add ec2 instance to in-memory inventory
+      add_host:
+        host: iTrust
+        ansible_host: "{{ iTrust_host5 }}"
+        # ansible_user: ec2-user
+        ansible_user: ubuntu
+        ansible_ssh_private_key_file: "{{ aws.ec2.key.private_key_file }}"
+
+    # MySQL
+    - name: wait for ssh to start on iTrust instance
+      wait_for:
+        host: "{{ mysql }}"
+        port: 22
+        state: started
+
+    - name: get ec2 host key
+      shell: "ssh-keyscan {{ mysql }}"
+      register: ssh_keyscan
+
+    - name: add ec2 instance to known_hosts
+      known_hosts:
+        name: "{{ mysql }}"
+        key: "{{ item }}"
+      with_items: "{{ ssh_keyscan.stdout_lines }}"
+
+    - name: add ec2 instance to in-memory inventory
+      add_host:
+        host: iTrust
+        ansible_host: "{{ mysql }}"
+        # ansible_user: ec2-user
+        ansible_user: ubuntu
+        ansible_ssh_private_key_file: "{{ aws.ec2.key.private_key_file }}"
+
+    - name: replace template with host ids
+      template:
+        src: inventory.j2
+        dest: inventory
+
+    - name: Replace ip address in build jobs
+      replace:
+        dest: "/var/lib/jenkins/build-jobs/iTrust-git-job.yml"
+        regexp: "dummy2"
+        replace: "{{  ec2.instances[5].public_ip }}"
+
+
+
+  

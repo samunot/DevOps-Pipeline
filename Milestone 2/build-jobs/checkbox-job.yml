@@ -1,0 +1,32 @@
+- job:
+    block-downstream: false
+    block-upstream: false
+    builders:
+    - shell: |-
+        cd server-side/site/
+        npm install
+    concurrent: false
+    description: null
+    disabled: false
+    name: !!python/unicode 'checkbox'
+    project-type: freestyle
+    publishers:
+    - post-tasks:
+      - escalate-status: false
+        matches:
+        - log-text: null
+          operator: AND
+        run-if-job-successful: false
+        script: |-
+          cd /var/lib/jenkins
+          ansible-playbook checkbox.io.yaml
+    scm:
+    - git:
+        branches:
+        - '*/master'
+        name: origin
+        refspec: +refs/heads/*:refs/remotes/origin/*
+        url: https://github.com/chrisparnin/checkbox.io.git
+        wipe-workspace: true
+    triggers: []
+    wrappers: []

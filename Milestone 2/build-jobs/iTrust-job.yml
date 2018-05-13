@@ -1,0 +1,101 @@
+- job:
+    block-downstream: false
+    block-upstream: false
+    builders:
+    - shell: |
+        mv iTrust2/src/main/java/db.properties.template iTrust2/src/main/java/db.properties
+        mv iTrust2/src/main/java/email.properties.template iTrust2/src/main/java/email.properties
+        mv iTrust2/src/main/resources/hibernate.properties.template iTrust2/src/main/resources/hibernate.properties
+        sed -i 's/password.*/password qwe123/g' iTrust2/src/main/java/db.properties
+        sed -i 's/password =.*/password = qwe123/g' iTrust2/src/main/resources/hibernate.properties
+        sed -i 's/from.*/from itrustv2test@gmail.com/g' iTrust2/src/main/java/email.properties
+        sed -i 's/username.*/username itrustv2test@gmail.com/g' iTrust2/src/main/java/email.properties
+        sed -i 's/password.*/password itrustnoone99/g' iTrust2/src/main/java/email.properties
+        cd iTrust2
+        cp -f ~/config/pom-data.xml .
+        sudo mvn process-test-classes -f pom-data.xml
+        sudo mvn test
+        sudo chown -R jenkins target
+        sudo chgrp -R jenkins target
+        cd ..
+        cp ~/scripts/fuzzer.js .
+        cp ~/config/package.json .
+        cp ~/scripts/gitCommands.js .
+        cp ~/scripts/loop.sh .
+        cp ~/scripts/prioritize.js .
+        npm install
+        echo "node_modules" >> .gitignore
+        git add .
+        git add -u
+        git commit -m 'Files added'
+        git checkout -b 'fuzzer'
+    concurrent: false
+    description: <!-- Managed by Jenkins Job Builder --><!-- Managed by Jenkins Job
+      Builder -->
+    disabled: false
+    name: !!python/unicode 'iTrust'
+    project-type: freestyle
+    publishers:
+    - raw:
+        xml: |
+          <hudson.plugins.jacoco.JacocoPublisher plugin="jacoco@3.0.1">
+          <execPattern>**/**.exec</execPattern>
+          <classPattern>**/classes</classPattern>
+          <sourcePattern>**/src/main/java</sourcePattern>
+          <inclusionPattern>**/*.class</inclusionPattern>
+          <exclusionPattern />
+          <skipCopyOfSrcFiles>false</skipCopyOfSrcFiles>
+          <minimumInstructionCoverage>0</minimumInstructionCoverage>
+          <minimumBranchCoverage>0</minimumBranchCoverage>
+          <minimumComplexityCoverage>0</minimumComplexityCoverage>
+          <minimumLineCoverage>0</minimumLineCoverage>
+          <minimumMethodCoverage>0</minimumMethodCoverage>
+          <minimumClassCoverage>0</minimumClassCoverage>
+          <maximumInstructionCoverage>0</maximumInstructionCoverage>
+          <maximumBranchCoverage>0</maximumBranchCoverage>
+          <maximumComplexityCoverage>0</maximumComplexityCoverage>
+          <maximumLineCoverage>0</maximumLineCoverage>
+          <maximumMethodCoverage>0</maximumMethodCoverage>
+          <maximumClassCoverage>0</maximumClassCoverage>
+          <changeBuildStatus>false</changeBuildStatus>
+          <deltaInstructionCoverage>0</deltaInstructionCoverage>
+          <deltaBranchCoverage>0</deltaBranchCoverage>
+          <deltaComplexityCoverage>0</deltaComplexityCoverage>
+          <deltaLineCoverage>0</deltaLineCoverage>
+          <deltaMethodCoverage>0</deltaMethodCoverage>
+          <deltaClassCoverage>0</deltaClassCoverage>
+          <buildOverBuild>false</buildOverBuild>
+          </hudson.plugins.jacoco.JacocoPublisher>
+    - html-publisher:
+        allow-missing: false
+        dir: $WORKSPACE/iTrust2/target/site/jacoco-ut
+        files: index.html
+        keep-all: false
+        link-to-last-build: false
+        name: HTML Report
+    - post-tasks:
+      - escalate-status: false
+        matches:
+        - log-text: null
+          operator: AND
+        run-if-job-successful: false
+        script: |-
+          sed -i 's/\r//' loop.sh
+          bash loop.sh
+          node prioritize.js > /var/lib/jenkins/testcases_sorted.txt
+    scm:
+    - git:
+        branches:
+        - '*/master'
+        credentials-id: pass
+        name: origin
+        refspec: +refs/heads/*:refs/remotes/origin/*
+        url: https://github.ncsu.edu/engr-csc326-staff/iTrust2-v2
+        wipe-workspace: true
+    triggers: []
+    wrappers:
+    - raw:
+        xml: |
+          <org.jenkinsci.plugins.credentialsbinding.impl.SecretBuildWrapper plugin="credentials-binding@1.16">
+          <bindings class="empty-list" />
+          </org.jenkinsci.plugins.credentialsbinding.impl.SecretBuildWrapper>

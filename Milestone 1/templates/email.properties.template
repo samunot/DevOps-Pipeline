@@ -1,0 +1,4 @@
+from 
+username {{itrust_email_user}}
+password {{itrust_email_password}}
+host smtp.gmail.com

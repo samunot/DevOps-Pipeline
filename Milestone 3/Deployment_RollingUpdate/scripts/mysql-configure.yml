@@ -1,0 +1,72 @@
+---
+- hosts: mysqlservers
+  name: configuration play
+  become: true
+  gather_facts: false
+  tasks:
+ 
+  - name: install python 2
+    raw: test -e /usr/bin/python || (sudo apt -y update && sudo apt install -y python-minimal)
+     
+  - name: gather_facts
+    setup:
+
+- name: Rolling update to iTrust servers
+  hosts: mysqlservers
+  gather_facts: yes
+  become: yes
+  
+  vars:
+    mysql_account: "root"
+    root_db_password: "qwe123"
+
+  tasks:
+
+    - name: Add MySQL Apt Key
+      apt_key:
+        keyserver: pgpkeys.mit.edu
+        id: 5072E1F5
+
+    - name: Add MySQL repository
+      apt_repository: 
+        repo: deb http://repo.mysql.com/apt/ubuntu/ trusty mysql-5.7    
+
+    - name: Set root Password
+      debconf:
+        name: mysql-community-server
+        question: 'mysql-community-server/root-pass'
+        value: '{{ root_db_password }}' 
+        vtype: password
+
+    - name: Set root Password Again
+      debconf:
+        name: mysql-community-server
+        question: 'mysql-community-server/re-root-pass'
+        value: '{{ root_db_password }}'
+        vtype: password
+
+    - name: Install MySQL 5.7
+      apt:
+        pkg: '{{ item }}'
+        state: present
+        update_cache: true
+      with_items:
+        - mysql-server
+
+    - name: Start MySQL
+      service:
+        name: mysql
+        state: started
+    
+    - name: Allow ip access to all servers
+      lineinfile: dest=/etc/mysql/mysql.conf.d/mysqld.cnf regexp='bind-address=.*' line='bind-address=0.0.0.0'
+
+    - name: Grant access to all servers
+      lineinfile: dest=/etc/mysql/mysql.conf.d/mysqld.cnf insertafter=EOF line='skip-grant-tables'
+
+    - name: Restart MySQL
+      service:
+        name: mysql
+        state: restarted
+    
+

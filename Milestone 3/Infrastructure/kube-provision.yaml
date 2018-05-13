@@ -1,0 +1,277 @@
+---
+- name: Provision a Kubernetes Cluster on AWS
+  hosts: localhost
+  vars:
+    aws:
+      region: us-east-1
+      ec2:
+        key:
+          name: csc519_rsa
+          private_key_file: "{{ ansible_env.HOME }}/.ssh/csc519_rsa"
+      vpc:
+        subnet:
+          id: subnet-59e5d82d
+
+  tasks:
+
+  - name: create ec2 security group for kube master nodes
+    ec2_group:
+      name: "kube-master"
+      description: "Kubernetes Master Nodes"
+      rules:
+        - proto: tcp
+          ports: 22
+          cidr_ip: 0.0.0.0/0
+          cidr_ipv6: ::/0
+        - proto: tcp
+          ports: 6443
+          cidr_ip: 0.0.0.0/0
+          cidr_ipv6: ::/0
+          rule_desc: "Kubernetes API server"
+        - proto: tcp
+          ports: 2379-2380
+          cidr_ip: 0.0.0.0/0
+          cidr_ipv6: ::/0
+          rule_desc: "etcd server client API"
+        - proto: tcp
+          ports: 10250
+          cidr_ip: 0.0.0.0/0
+          cidr_ipv6: ::/0
+          rule_desc: "Kubelet API"
+        - proto: tcp
+          ports: 10251
+          cidr_ip: 0.0.0.0/0
+          cidr_ipv6: ::/0
+          rule_desc: "kube-schedule"
+        - proto: tcp
+          ports: 10252
+          cidr_ip: 0.0.0.0/0
+          cidr_ipv6: ::/0
+          rule_desc: "kube-controller-manager"
+        - proto: tcp
+          ports: 10255
+          cidr_ip: 0.0.0.0/0
+          cidr_ipv6: ::/0
+          rule_desc: "Read-only Kubelet API"
+      rules_egress:
+        - proto: all
+          cidr_ip: 0.0.0.0/0
+          cidr_ipv6: ::/0
+
+  - name: create ec2 security group for kube worker nodes
+    ec2_group:
+      name: "kube-worker"
+      description: "Kubernetes Worker Nodes"
+      rules:
+        - proto: tcp
+          ports: 22
+          cidr_ip: 0.0.0.0/0
+          cidr_ipv6: ::/0
+        - proto: tcp
+          ports: 10250
+          cidr_ip: 0.0.0.0/0
+          cidr_ipv6: ::/0
+          rule_desc: "Kubelet API"
+        - proto: tcp
+          ports: 10255
+          cidr_ip: 0.0.0.0/0
+          cidr_ipv6: ::/0
+          rule_desc: "Read-only Kubelet API"
+        - proto: tcp
+          ports: 30000-32767
+          cidr_ip: 0.0.0.0/0
+          cidr_ipv6: ::/0
+          rule_desc: "NodePort Services"
+      rules_egress:
+        - proto: all
+          cidr_ip: 0.0.0.0/0
+          cidr_ipv6: ::/0
+
+  - name: provision ec2 instance for kube master node
+    ec2:
+#      id:
+      image: ami-43a15f3e
+      instance_type: t2.medium
+      key_name: "{{ aws.ec2.key.name }}"
+      group: kube-master
+      region: "{{ aws.region }}"
+      vpc_subnet_id: "{{ aws.vpc.subnet.id }}"
+      assign_public_ip: true
+      instance_tags:
+        csc519: kube-master
+      wait: true
+    register: ec2_master
+
+  - debug:
+      var: ec2_master
+      verbosity: 1
+
+  - name: wait for kube master instance to start
+    wait_for:
+      host: "{{ item.public_dns_name }}"
+      port: 22
+      state: started
+    loop: "{{ ec2_master.instances }}"
+
+  - name: add kube master node to in-memory inventory
+    add_host:
+      name: kube_master
+      groups: kube_nodes, kube_master_nodes
+      ansible_user: ubuntu
+      ansible_host: "{{ item.public_dns_name }}"
+      ansible_ssh_private_key_file: "{{ aws.ec2.key.private_key_file }}"
+      ansible_ssh_common_args: "-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+      ansible_python_interpreter: /usr/bin/python3
+    loop: "{{ ec2_master.instances }}"
+
+  - name: provision ec2 instances for kube worker nodes
+    ec2:
+#      id:
+      image: ami-43a15f3e
+      instance_type: t2.medium
+      key_name: "{{ aws.ec2.key.name }}"
+      group: kube-worker
+      region: "{{ aws.region }}"
+      vpc_subnet_id: "{{ aws.vpc.subnet.id }}"
+      assign_public_ip: true
+      instance_tags:
+        csc519: kube-worker
+      wait: true
+      count: 3
+    register: ec2_worker
+
+  - debug:
+      var: ec2_worker
+      verbosity: 1
+
+  - name: wait for kube worker instances to start
+    wait_for:
+      host: "{{ item.public_dns_name }}"
+      port: 22
+      state: started
+    loop: "{{ ec2_worker.instances }}"
+
+  - name: add kube worker nodes to in-memory inventory
+    add_host:
+      name: "kube_worker_{{ item.ami_launch_index }}"
+      groups: kube_nodes, kube_worker_nodes
+      ansible_user: ubuntu
+      ansible_host: "{{ item.public_dns_name }}"
+      ansible_ssh_private_key_file: "{{ aws.ec2.key.private_key_file }}"
+      ansible_ssh_common_args: "-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+      ansible_python_interpreter: /usr/bin/python3
+    loop: "{{ ec2_worker.instances }}"
+
+- hosts: kube_nodes
+  become: true
+  tasks:
+    - name: update package cache
+      apt:
+        update_cache: yes
+#        upgrade: yes
+    - name: install curl and some tools
+      apt:
+        name: "{{ item }}"
+      with_items:
+        - apt-transport-https
+        - ca-certificates
+        - curl
+        - software-properties-common
+    - name: docker apt signing key
+      apt_key:
+        id: 0EBFCD88
+        url: https://download.docker.com/linux/ubuntu/gpg
+    - name: docker apt repository
+      apt_repository:
+        repo: deb https://download.docker.com/linux/ubuntu xenial stable
+    - name: google apt signing key
+      apt_key:
+        id: BA07F4FB
+        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+    - name: google apt repository
+      apt_repository:
+        repo: deb http://apt.kubernetes.io/ kubernetes-xenial main
+    - name: install docker & kubernetes
+      apt:
+        name: "{{ item }}"
+      with_items:
+        - docker-ce=17.03.2~ce-0~ubuntu-xenial
+        - kubeadm
+        - kubelet
+        - kubectl
+    - name: freeze docker-ce version
+      shell: apt-mark hold docker-ce
+      register: result
+      changed_when: result.stdout == "docker-ce set on hold."
+
+- hosts: kube_master_nodes
+  become: true
+  tasks:
+    - name: initialize kube master
+      shell: "kubeadm init --pod-network-cidr=192.168.0.0/16"
+      args:
+        creates: /etc/kubernetes/admin.conf
+    - name: kube configuration directory for root
+      file:
+        path: "~/.kube"
+        state: directory
+    - name: kube configuration for root
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "~/.kube/config"
+        remote_src: yes
+    - name: initialize kube networking
+      shell: |
+        kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$(kubectl version | base64 | tr -d '\n')"
+      args:
+        creates: /etc/cni/net.d/10-weave.conf
+    - name: wait for kube master to be ready
+      shell: kubectl get node -l node-role.kubernetes.io/master= | grep master | awk '{print $2}'
+      register: result
+      until: result.stdout == "Ready"
+      retries: 120
+      delay: 1
+    - name: kube configuration directory for default user
+      file:
+        path: "/home/{{ ansible_user }}/.kube"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+    - name: kube configuration for default user
+      copy:
+        remote_src: yes
+        src: /etc/kubernetes/admin.conf
+        dest: "/home/{{ ansible_user }}/.kube/config"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: go+rx,u+rwx
+    - name: get discovery token for joining kube cluter
+      shell: kubeadm token list | grep 'default-node-token' | awk '{print $1}'
+      register: discovery_token
+    - debug:
+        var: discovery_token
+        verbosity: 1
+    - name: get hash of discovery token ca certificate for joining kube cluter
+      shell: openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/^.* //'
+      register: discovery_token_ca_cert_hash
+    - debug:
+        var: discovery_token_ca_cert_hash
+        verbosity: 1
+
+- hosts: kube_worker_nodes
+  become: true
+  tasks:
+    - name: join kube
+      shell: "kubeadm join {{ hostvars['localhost']['ec2_master'].instances[0].private_ip }}:6443 --token {{ hostvars['kube_master']['discovery_token'].stdout }} --discovery-token-ca-cert-hash sha256:{{ hostvars['kube_master']['discovery_token_ca_cert_hash'].stdout }}"
+      args:
+        creates: /etc/kubernetes/kubelet.conf
+
+- hosts: kube_master_nodes
+  become: true
+  tasks:
+    - name: wait for all nodes to be ready
+      shell: kubectl get nodes | tail -n +2 | awk '{print $2}' | paste -sd "" -
+      register: result
+      until: result.stdout == "ReadyReadyReadyReady"
+      retries: 120
+      delay: 1

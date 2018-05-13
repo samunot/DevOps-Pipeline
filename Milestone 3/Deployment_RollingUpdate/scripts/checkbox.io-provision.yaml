@@ -1,0 +1,157 @@
+---
+- name: provision checkbox on AWS
+  hosts: localhost
+  vars:
+    aws:
+      region: us-east-1
+      ec2:
+        key:
+          name: "csc519-checkbox.io-servers"
+          private_key_file: "./csc519_rsa"
+        checkbox:
+          image_id: "ami-97785bed"
+          security_group:
+            name: "csc519-checkbox.io-servers"
+  tasks:
+
+    - name: generate ssh key pair
+      shell: "ssh-keygen -t rsa -b 4096 -f {{ aws.ec2.key.private_key_file }}"
+      args:
+        creates: "{{ aws.ec2.key.private_key_file }}"
+
+    - name: create ec2 key pair
+      ec2_key:
+        name:   "{{ aws.ec2.key.name }}"
+        region: "{{ aws.region }}"
+        key_material: "{{ item }}"
+      with_file: "{{ aws.ec2.key.private_key_file }}.pub"
+
+    - name: create ec2 security group for checkbox
+      ec2_group:
+        name: "{{ aws.ec2.checkbox.security_group.name }}"
+        region: "{{ aws.region }}"
+        description: checkbox
+        rules:
+          - proto: tcp
+            ports: 80
+            cidr_ip: 0.0.0.0/0
+            cidr_ipv6: ::/0
+          - proto: tcp
+            ports: 22
+            cidr_ip: 0.0.0.0/0
+            cidr_ipv6: ::/0
+        rules_egress:
+          - proto: all
+            from_port: 0
+            to_port: 65535
+            cidr_ip: 0.0.0.0/0
+            cidr_ipv6: ::/0
+
+    - name: provision ec2 instance for checkbox
+      ec2:
+        image: "{{ aws.ec2.checkbox.image_id }}"
+        instance_type: t2.micro
+        key_name: "{{ aws.ec2.key.name }}"
+        group: "{{ aws.ec2.checkbox.security_group.name }}"
+        region: "{{ aws.region }}"
+        instance_tags:
+          csc519: checkbox
+        wait: true
+      register: ec2
+
+    - set_fact:
+        checkbox_host: "{{ ec2.instances[0].public_ip }}"
+
+    - name: wait for ssh to start on checkbox instance
+      wait_for:
+        host: "{{ checkbox_host }}"
+        port: 22
+        state: started
+
+    - name: get ec2 host key
+      shell: "ssh-keyscan {{ checkbox_host }}"
+      register: ssh_keyscan
+
+    - name: add ec2 instance to known_hosts
+      known_hosts:
+        name: "{{ checkbox_host }}"
+        key: "{{ item }}"
+      with_items: "{{ ssh_keyscan.stdout_lines }}"
+
+    - name: add ec2 instance to in-memory inventory
+      add_host:
+        host: checkbox
+        ansible_host: "{{ checkbox_host }}"
+        ansible_user: ec2-user
+        ansible_ssh_private_key_file: "./{{ aws.ec2.key.private_key_file }}"
+
+- name: configure checkbox server
+  hosts: checkbox
+  become: true
+  tasks:
+
+    - name: install docker dependencies
+      yum:
+        name: device-mapper-persistent-data, lvm2
+        state: latest
+
+    - name: install docker
+      yum:
+        name: docker
+        state: latest
+
+    - name: ensure docker is enabled and started
+      service:
+        name: docker
+        enabled: yes
+        state: started
+
+    - name: add ec2-user user to docker group
+      user:
+        name: ec2-user
+        groups: docker
+        append: yes
+
+    - name: ensure docker is enabled and started
+      service:
+        name: docker
+        enabled: yes
+        state: started
+
+    - name: copy checkbox.io build to server
+      synchronize:
+        src: /var/lib/jenkins/workspace/checkbox/
+        dest: /checkbox.io
+
+    - name: specify location of static html files
+      lineinfile:
+        path: "/checkbox.io/local-conf/default"
+        regexp: '^  root '
+        line: '  root /usr/share/nginx/html;'
+        state: present
+
+    - name: point nginx to node.js
+      lineinfile:
+        path: "/checkbox.io/local-conf/nginx.conf"
+        regexp: '^       server '
+        line: '       server checkbox:3002;'
+        state: present
+
+    - name: copy run-checkbox.io.sh to server
+      copy:
+        src: /var/lib/jenkins/scripts/run-checkbox.io.sh
+        dest: /checkbox.io/
+        mode: u=rwx,g=rx,o=rx
+
+    - name: start checkbox.io
+      shell: /checkbox.io/run-checkbox.io.sh
+      args:
+        chdir: /checkbox.io
+
+    # for human-readable output, run with ANSIBLE_STDOUT_CALLBACK=debug
+    - name: print some handy info
+      debug:
+        msg: |
+          checkbox URL:
+
+            "http://{{ ansible_host }}:80"

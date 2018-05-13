@@ -1,0 +1,67 @@
+- job:
+    block-downstream: false
+    block-upstream: false
+    builders:
+    - shell: |-
+        mv iTrust2/src/main/java/db.properties.template iTrust2/src/main/java/db.properties
+        mv iTrust2/src/main/java/email.properties.template iTrust2/src/main/java/email.properties
+        mv iTrust2/src/main/resources/hibernate.properties.template iTrust2/src/main/resources/hibernate.properties
+        sed -i 's/password.*/password qwe123/g' iTrust2/src/main/java/db.properties
+        sed -i 's/localhost/dummy2/g' iTrust2/src/main/java/db.properties
+        sed -i 's/password =.*/password = qwe123/g' iTrust2/src/main/resources/hibernate.properties
+        sed -i 's/localhost/dummy2/g' iTrust2/src/main/resources/hibernate.properties
+        sed -i 's/from.*/from itrustv2test@gmail.com/g' iTrust2/src/main/java/email.properties
+        sed -i 's/username.*/username itrustv2test@gmail.com/g' iTrust2/src/main/java/email.properties
+        sed -i 's/password.*/password itrust299/g' iTrust2/src/main/java/email.properties
+        cd iTrust2
+        mvn process-test-classes
+        mvn clean test verify checkstyle:checkstyle
+        mvn war:war
+    concurrent: false
+    description: <!-- Managed by Jenkins Job Builder --><!-- Managed by Jenkins Job
+      Builder --><!-- Managed by Jenkins Job Builder --><!-- Managed by Jenkins Job
+      Builder -->
+    disabled: false
+    name: !!python/unicode 'iTrust'
+    project-type: freestyle
+    publishers:
+    - raw:
+        xml: |
+          <hudson.tasks.ArtifactArchiver>
+          <artifacts>iTrust2/target/iTrust2.war</artifacts>
+          <allowEmptyArchive>false</allowEmptyArchive>
+          <onlyIfSuccessful>true</onlyIfSuccessful>
+          <fingerprint>false</fingerprint>
+          <defaultExcludes>true</defaultExcludes>
+          <caseSensitive>true</caseSensitive>
+          </hudson.tasks.ArtifactArchiver>
+    - post-tasks:
+      - escalate-status: false
+        matches:
+        - log-text: null
+          operator: AND
+        run-if-job-successful: true
+        script: |-
+          cd /var/lib/jenkins/scripts
+          sudo ansible-playbook -i inventory iTrust-configure.yml
+    scm:
+    - git:
+        branches:
+        - '*/production'
+        credentials-id: pass
+        name: origin
+        refspec: +refs/heads/*:refs/remotes/origin/*
+        url: https://github.ncsu.edu/itrust-no-one/iTrust2-v2.git
+        wipe-workspace: true
+    triggers:
+    - pollscm:
+        cron: '* * * * *
+
+          '
+        ignore-post-commit-hooks: false
+    wrappers:
+    - raw:
+        xml: |
+          <org.jenkinsci.plugins.credentialsbinding.impl.SecretBuildWrapper plugin="credentials-binding@1.16">
+          <bindings class="empty-list" />
+          </org.jenkinsci.plugins.credentialsbinding.impl.SecretBuildWrapper>

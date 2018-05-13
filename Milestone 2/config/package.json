@@ -1,0 +1,27 @@
+{
+    "name": "fuzzer",
+    "version": "1.0.0",
+    "description": "Spring 2018 CSC 519 Group Project",
+    "main": "fuzzer.js",
+    "dependencies": {
+        "child_process": "^1.0.2",
+        "fs": "^0.0.1-security",
+        "line-by-line": "^0.1.6",
+        "line-reader-sync": "^0.1.0",
+        "random-js": "^1.0.8",
+        "slash": "^1.0.0",
+        "xml2js": "^0.4.17",
+        "bluebird": "^3.5.0",
+        "columnify": "^1.5.4"
+    },
+    "devDependencies": {},
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.ncsu.edu/itrust-no-one/project.git"
+    },
+    "author": "",
+    "license": "ISC"
+}

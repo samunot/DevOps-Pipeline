@@ -1,0 +1,12 @@
+{
+  "name": "monitor",
+  "version": "0.0.1",
+  "description": "",
+  "main": "monitor.js",
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {},
+  "dependencies": {
+    "request": "^2.55.0"
+  }
+}

@@ -1,0 +1,16 @@
+---
+unique_id: "jenkins-milestone2"
+aws:
+  region: us-east-1
+  ec2:
+    key:
+      name: "csc519-{{ unique_id }}"
+      private_key_file: "aws-private.pem"
+    jenkins:
+      idempotent_id: "csc519-jenkins-{{ unique_id }}"
+      # Ubuntu 16
+      image_id: "ami-66506c1c" 
+      # Ubuntu 14
+      # image_id: "ami-49c9295f"
+      security_group:
+        name: "csc519-jenkins-{{ unique_id }}"
